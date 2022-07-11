@@ -1,7 +1,7 @@
 # WorkflowyLens
 Adds read-only features (search, visualize) to Workflowy
 
-## This userscript is not designed to modify the workflowy content, nor even to make api calls to external resources. It is a read-only prequel to [HyperAppWorkflowy](https://github.com/markfirmware/HyperAppWorkfloy#readme)
+## This userscript is not designed to modify the workflowy content, nor even to make api calls to external resources. It is a read-only prequel to [HyperAppWorkflowy](https://github.com/markfirmware/HyperAppWorkflowy#readme)
 
 ### Utilizes HyperApp
 [HyperApp](https://github.com/jorgebucaran/hyperapp#readme) applied to [Workflowy](https://workflowy.com/features/)

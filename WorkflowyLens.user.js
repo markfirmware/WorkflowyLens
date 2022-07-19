@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WorkflowyLens
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.3
 // @description  See more in Workflowy
 // @author       Mark E Kendrat
 // @match        https://workflowy.com/
@@ -13,249 +13,201 @@
 (async () => {
     'use strict'
     var dev_mode = false
-    window.WFEventListener = (event) => {
-        if (event == 'documentReady') {
-            const style = document.createElement('style')
-            style.appendChild(document.createTextNode('')) // for webkit
-            document.head.appendChild(style)
-            // better alignment for monospace fonts
-            style.sheet.addRule('.contentTag', 'padding: 0px 1px !important')
-            style.sheet.addRule('.children', 'padding-left: 23px !important')
-            addStarredQueries(starting_state)
-            recordAction(starting_state, "StartApp")
-            startApp(starting_state)
+    var stopAppFn
+    var WF
+    var guidance_issued = false // use log query
+    const trap = f => {
+        try {
+            f()
+        } catch (e) {
+            console.log('trap WorkflowyLens', e)
         }
     }
-    const { h, text, app } = await import("https://unpkg.com/hyperapp")
-    const WF = window.WF
-    const locationChanged = "locationChanged"
-    const searchTyped = "searchTyped"
-    const listenToWorkflowyMessageRemoved = (dispatch, action) => {
-        const observer = new MutationObserver((mutations_list) => {
-            mutations_list.forEach((mutation) => {
-                mutation.removedNodes.forEach((removed_node) => {
-                    if(removed_node.className == ' _171q9nk') {
-                        dispatch(action)
-                    }
+    const wfevent_prefix = 'wfevent.'
+    const setWfEventListener = f => { // this adds a trap and also adds the disambiguation prefix used by WorkflowyLens
+        window.WFEventListener = raw_event_name => trap(() => f(wfevent_prefix + raw_event_name))
+    }
+    setWfEventListener(event => {
+        if (event == documentReady) {
+            WF = window.WF
+            startApp(initialLog())
+        }
+    })
+    const { h, text, app } = await import('https://unpkg.com/hyperapp')
+    const initialLog = () => starredQueries()
+    const showMessageClassName = ' _171q9nk'
+    const listenToKeydown = (dispatch, action) => {
+        const handler = e => trap (() => dispatch(action, e))
+        window.addEventListener('keydown', handler)
+        return () => window.removeEventListener('keydown', handler)
+    }
+    const listenToWfEvent = (dispatch, action) => {
+        setWfEventListener(event => dispatch(action, event))
+        return () => { window.WFEventListener = null }
+    }
+    const listenToWfShowMessageRemoved = (dispatch, action) => {
+        const observer = new MutationObserver(
+            (mutations_list) => {
+                trap(() => {
+                    mutations_list.forEach((mutation) => {
+                        mutation.removedNodes.forEach((removed_node) => {
+                            if(removed_node.className == showMessageClassName) {
+                                dispatch(action)
+                            }
+                        })
+                    })
                 })
             })
-        })
         observer.observe(document.body, { subtree: true, childList: true })
         return () => observer.disconnect()
     }
-    const onWorkflowyMessageRemoved = (action) => [listenToWorkflowyMessageRemoved, action]
-    const starting_state = { log: [] }
-    var stopAppFn
-    var nesting = 0
-    const WorkflowyMessageRemoved = (s) => {
-        console.log("workflowy message removed - restarting ShowyWorkflowy")
-        stopAppFn()
-        startApp(s)
-    }
-    const listenToWorkflowyEvents = (dispatch, action) => {
-        window.WFEventListener = (event) => {
-            try {
-                nesting += 1
-                dispatch(action, event)
-            } catch (e) {
-                console.log(e)
+    const onKeydown = (action) => [listenToKeydown, action]
+    const onWfEvent = (action) => [listenToWfEvent, action]
+    const onWfShowMessageRemoved = (action) => [listenToWfShowMessageRemoved, action]
+    const app_dom_id = 'WorkflowyLens-showmessage-div'
+    const isAppShown = () => document.getElementById(app_dom_id) && true
+    const restartApp = (log, condition, f) => {
+        if (condition) {
+            f?.()
+            if (isAppShown()) {
+                return [log, () => WF.hideMessage()]
+            } else {
+                startApp(log)
             }
-            nesting -= 1
+        } else {
+            return [log]
         }
-        return () => { window.WFEventListener = null }
     }
-    const onWorkflowyEvent = (action) => [listenToWorkflowyEvents, action]
-    const WfEventReceived = (s, event) => {
-        try {
-            const was_editing_id = isEditEvent(s.log?.[0].event) && focusedId(s.log)
-            record(s, event, () => {
-                if (isEditEvent(event)) {
-                    const focused = WF.focusedItem()
-                    return { commentFocusedName: focused != null ?
-                            focused.getNameInPlainText() : "<not focused!>" }
+    const documentReady = wfevent_prefix + 'documentReady'
+    const locationChanged = wfevent_prefix + 'locationChanged'
+    const searchTyped = wfevent_prefix + 'searchTyped'
+    const actions = {
+        WfShowMessageRemoved: log => {
+            const guidance = guidance_issued || (() => WF.showMessage('WorkflowyLens message can be toggled with control-l'))
+            guidance_issued = true
+            return [record(log, 'WfShowMessageRemoved'), guidance]
+        },
+        ChangeSearch: (log, query) => [record(log, "ChangeSearch", { query }), () => WF.search(query)],
+        WfEvent: (log, event) => [record(log, event)],
+        Keydown: (log, e) => restartApp(log, e.ctrlKey && e.key == 'l', () => e.preventDefault()),
+        DevShowInfoMessage: log => [record(log, 'DevShowInfoMessage'), () => WF.showMessage('show message')],
+        DevResetLog: _ => [record(initialLog(), "DevResetLog")],
+        DevToggleShowLog: log => [record(log, "DevToggleShowLog", { show_log: !q.showLog(log) })],
+    }
+    const q = {
+        getSearchHistory: log => {
+            const h = [""]
+            for (const r of q.stableQueries(log)) {
+                if (r?.query && !h.includes(r.query)) {
+                    h.push(r.query)
                 }
-            })
-            if (focusedId(s.log) != was_editing_id) {
-                const was_editing_item = WF.getItemById(was_editing_id)
-                if (was_editing_item) {
-                    lostFocus(s, was_editing_item)
+            }
+            return h
+        },
+        stableQueries: log => {
+            const log2 = []
+            var i = 0
+            while (i < log.length) {
+                if (i + 1 < log.length &&
+                    log[i + 0].event == searchTyped &&
+                    log[i + 1].event == locationChanged &&
+                    log[i + 1].query !== undefined) {
+                    log2.push(log[i + 1])
+                    var x = log[i + 1].query
+                    i += 2
+                    while (i + 1 < log.length &&
+                           log[i + 0].event == searchTyped &&
+                           log[i + 1].event == locationChanged &&
+                           log[i + 1].query !== undefined &&
+                           x.startsWith(log[i + 1].query)) {
+                        x = log[i + 1].query
+                        i += 2
+                    }
                 } else {
-                    console.log("editing " + was_editing_id + " not found")
+                    if (log[i + 0] !== undefined) {
+                        log2.push(log[i + 0])
+                    }
+                    i += 1
                 }
             }
-        } catch (e) {
-            console.log(e)
-        }
-        return { ...s }
+            return log2
+        },
+        mostRecent: (log, propertyName, def = '') => {
+            for (const x of log) {
+                const y = x[propertyName]
+                if (y !== undefined) {
+                    return y
+                }
+            }
+            return def
+        },
+        focusedId: log => q.mostRecent(log, 'focusedId'),
+        focusedItem: log => WF.getItemById(q.focusedId(log)),
+        focusedName: log => {
+            const item = q.focusedItem(log)
+            return item == null ? null : item.getNameInPlainText()
+        },
+        currentId: log => q.mostRecent(log, 'currentId'),
+        query: log => q.mostRecent(log, 'query'),
+        showLog: log => q.mostRecent(log, 'show_log', false),
     }
-    const lostFocus = (state, item) => {}
-    const isEditEvent = (event) => event == "edit" || event == "operation--edit"
-    const record = (s, event, moreFn) => {
-        var r = {
-            event: event,
-        }
-        if (nesting > 1) {
-            r.nesting = nesting
-        }
-        const c = WF.currentItem().getId()
-        if (c != currentId(s.log)) {
-            r.currentId = c
-        }
-        const f = isEditEvent(event) && WF.focusedItem()?.getId() || ""
-        if (f != focusedId(s.log)) {
-            r.focusedId = f
+    const lostFocus = (log, item) => {}
+    const record = (log, event, more) => {
+        var r = { event: event }
+        var x = WF.currentItem().getId()
+        if (x != q.currentId(log)) {
+            r.currentId = x
         }
         const query_or_null = WF.currentSearchQuery()
-        const q = query_or_null ? query_or_null.trim() : ""
-        if (q != query(s.log)) {
-            r.query = q
+        x = query_or_null ? query_or_null.trim() : ""
+        if (x != q.query(log)) {
+            r.query = x
         }
-        r = { ...r, ...moreFn?.() }
-        s.log.unshift(r)
-        return r
+        return [{ ...r, ...more }, ...log]
     }
-    const recordAction = (s, actionName, moreFn) => {
-        record(s, actionName, moreFn)
-        return { ...s }
-    }
-    const recordReaction = (s, actionName, moreFn) => {
-        record(s, actionName, moreFn)
-        return { ...s }
-    }
-    const recordAsString = (r) => {
-        var s = r?.nesting ? r.nesting.toString() + "/" : ""
-        s += r.event
-        s += (r.show_log !== undefined) ? " " + r.show_log : ""
-        s += (r.detail_level !== undefined) ? " " + r.detail_level : ""
-        s += (r.query !== undefined) ? " " + r.query : ""
-        s += (r.currentId !== undefined) ?
-            (" current:" +
-             (WF.getItemById(r.currentId) ?
-              WF.getItemById(r.currentId).getUrl() : "(deleted? " + r.currentId + ")")) : ""
-        s += (r.focusedId !== undefined) ?
-            r.focusedId ?
-            (" focused:" +
-             (WF.getItemById(r.focusedId) ?
-              WF.getItemById(r.focusedId).getUrl() : "(deleted? " + r.focusedId + ")")) : " lost-focus"
-        : ""
-        s += (r.commentFocusedName !== undefined) ? " <" + r.commentFocusedName + ">" : ""
+    const logItemToString = r => {
+        var s = ""
+        for (const [k, v] of Object.entries(r)) {
+            s += k + ":" + v + " "
+        }
         return s
     }
-    const stableQueries = (log) => {
-        const log2 = []
-        var i = 0
-        while (i < log.length) {
-            if (i + 1 < log.length &&
-                log[i + 0].event == searchTyped &&
-                log[i + 1].event == locationChanged &&
-                log[i + 1].query !== undefined) {
-                log2.push(log[i + 1])
-                var q = log[i + 1].query
-                i += 2
-                while (i + 1 < log.length &&
-                       log[i + 0].event == searchTyped &&
-                       log[i + 1].event == locationChanged &&
-                       log[i + 1].query !== undefined &&
-                       q.startsWith(log[i + 1].query)) {
-                    q = log[i + 1].query
-                    i += 2
-                }
-            } else {
-                if (log[i + 0] !== undefined) {
-                    log2.push(log[i + 0])
-                }
-                i += 1
-            }
-        }
-        return log2
-    }
-    const getSearchHistory = (log) => {
-        const h = [""]
-        for (const r of stableQueries(log)) {
-            if (r?.query && !h.includes(r.query)) {
-                h.push(r.query)
-            }
-        }
-        return h
-    }
-    const addStarredQueries = (s) => {
-        WF.starredLocations()
-            .filter((x) => x.search != null)
-            .map((x) => x.search)
+    const starredQueries = () => {
+        return WF.starredLocations()
+            .filter(x => x.search != null)
+            .map(x => x.search)
             .sort()
             .reverse()
             .reduce((acc, i) => {
             acc[i.startsWith("@") ? 1 : 0].push(i)
             return acc
-        }, [[], []]).flat().map((x) => record(s, "AddStarredQuery", () => ({ query: x })))
+        }, [[], []]).flat().reduce((list, x) => [{ event: 'StarredQuery', query: x }, ...list], [])
     }
-    const mostRecent = (log, propertyName, def = '') => {
-        for (const x of log) {
-            const y = x[propertyName]
-            if (y !== undefined) {
-                return y
-            }
-        }
-        return def
-    }
-    const focusedId = (log) => mostRecent(log, 'focusedId')
-    const focusedItem = (log) => WF.getItemById(focusedId(log))
-    const focusedName = (log) => {
-        const item = focusedItem(log)
-        return item == null ? null : item.getNameInPlainText()
-    }
-    const currentId = (log) => mostRecent(log, 'currentId')
-    const query = (log) => mostRecent(log, 'query')
-    const showLog = (log) => mostRecent(log, 'show_log', false)
-    const detailLevel = (log) => mostRecent(log, 'detail_level', 1)
-    const nextDetailLevel = (log) => detailLevel(log) % 3 + 1
-    const ChangeSearch = (s, q) => {
-        return recordAction(s, "ChangeSearch", () => {
-            WF.search(q)
-        })
-    }
-    const ResetLog = (s) => {
-        s.log = []
-        addStarredQueries(s)
-        return recordAction(s, "ResetLog")
-    }
-    const ChangeDetailLevel = (s) => recordAction(s, "ChangeDetailLevel",
-                                                  () => ({ detail_level: nextDetailLevel(s.log) }))
-    const ToggleShowLog = (s) => recordAction(s, "ToggleShowLog", () => ({ show_log: !showLog(s.log) }))
-    const startApp = (initialState) => {
-        const app_dom_id = "workflowy-showmessage-div"
-        WF.hideMessage()
+    const startApp = log => {
+        stopAppFn?.()
         WF.showMessage(`<div id="${app_dom_id}"></div>`)
-        const font = { style: {"font-family": "monospace"} }
         stopAppFn = app({
             node: document.getElementById(app_dom_id),
-            init: initialState,
-            view: ({ log }) =>
-            h("div", {
-                title: "WorkflowyLens",
-                style: {
-                    "font-family": "monospace",
-                    "color": "black",
-                    "text-align": "left",
-                }, }, [
-                h("button", { ...font, onclick: ToggleShowLog, title: "hide/show event log",
-                             hidden: !dev_mode},
-                  text(log.length.toString().padStart(3, "0") + (log.length == 1 ? "  event" : " events"))),
-                getSearchHistory(log).length > 1 && h("select", {
-                    onchange: (_, e) => [ChangeSearch, e.target.value],
+            init: [record(log, "startApp")],
+            view: log =>
+            h("div", { title: "WorkflowyLens", style: { "text-align": "left" } }, [
+                dev_mode && h('button', { onclick: actions.DevShowInfoMessage }, text('show message')),
+                dev_mode && h("button", { onclick: actions.DevToggleShowLog, title: "hide/show event log" },
+                              text(log.length.toString().padStart(3, "0") + (log.length == 1 ? "  event" : " events"))),
+                q.getSearchHistory(log).length > 1 && h("select", {
+                    style: { position: "absolute", right: "50px", top: "5px" },
+                    onchange: (_, e) => [actions.ChangeSearch, e.target.value],
                     title: "search history including starred"
-                }, getSearchHistory(log).map((q) => h("option", {selected: q == query(log), title: q}, text(q)))),
-                h("div", { hidden: detailLevel(log) < 2 }, [
-                    h("span", {}, text("detail level " + detailLevel(log))
-                     )]),
-                h("div", { hidden: !showLog(log) || log.length == 0 }, [
-                    h("button", { ...font, onclick: ResetLog, title: "reset event log" }, text("reset")),
+                }, q.getSearchHistory(log).map(x => h("option", {selected: x == q.query(log), title: x}, text(x)))),
+                h("div", { hidden: !q.showLog(log) || log.length == 0 }, [
+                    h("button", { onclick: actions.DevResetLog, title: "reset event log" }, text("reset")),
                     h("div", {},
-                      h("ul", {}, log.slice(0, 10).map((m) => h("li", {}, text(recordAsString(m))))),
+                      h("ul", {}, log.slice(0, 10).map(x => h("li", {}, text(logItemToString(x))))),
                      )]),
             ]),
-            subscriptions: (s) => [onWorkflowyEvent(WfEventReceived),
-                                   onWorkflowyMessageRemoved(WorkflowyMessageRemoved)],
+            subscriptions: log => [onKeydown(actions.Keydown),
+                                   onWfEvent(actions.WfEvent),
+                                   onWfShowMessageRemoved(actions.WfShowMessageRemoved)],
         })
     }
     })()

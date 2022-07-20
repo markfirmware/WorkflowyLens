@@ -15,4 +15,4 @@ Adds read-only features (search, visualize) to [Workflowy](https://workflowy.com
 Utilizes HyperApp
 [HyperApp](https://github.com/jorgebucaran/hyperapp#readme) applied to [Workflowy](https://workflowy.com/features/)
 
-Currently developed and tested in Brave/Chromium/Vivaldi on Linux
+Currently developed and tested in Brave/Chromium/Edge/Vivaldi on Linux

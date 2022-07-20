@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WorkflowyLens
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.4
 // @description  See more in Workflowy
 // @author       Mark E Kendrat
 // @match        https://workflowy.com/
@@ -15,7 +15,6 @@
     var dev_mode = false
     var stopAppFn
     var WF
-    var guidance_issued = false // use log query
     const trap = f => {
         try {
             f()
@@ -81,12 +80,10 @@
     const documentReady = wfevent_prefix + 'documentReady'
     const locationChanged = wfevent_prefix + 'locationChanged'
     const searchTyped = wfevent_prefix + 'searchTyped'
+    const searchHistorySelectElementId = 'WorkflowyLens.searchHistorySelectElement.id'
+    const fxFocusSearchHistory = () => requestAnimationFrame(() => document.getElementById(searchHistorySelectElementId)?.focus())
     const actions = {
-        WfShowMessageRemoved: log => {
-            const guidance = guidance_issued || (() => WF.showMessage('WorkflowyLens message can be toggled with control-l'))
-            guidance_issued = true
-            return [record(log, 'WfShowMessageRemoved'), guidance]
-        },
+        WfShowMessageRemoved: log => [record(log, 'WfShowMessageRemoved', !q.isGuidanceIssued(log) && { guidanceissued: true }), q.isGuidanceIssued(log) || (() => WF.showMessage('WorkflowyLens message can be toggled with control-l'))],
         ChangeSearch: (log, query) => [record(log, "ChangeSearch", { query }), () => WF.search(query)],
         WfEvent: (log, event) => [record(log, event)],
         Keydown: (log, e) => restartApp(log, e.ctrlKey && e.key == 'l', () => e.preventDefault()),
@@ -95,6 +92,7 @@
         DevToggleShowLog: log => [record(log, "DevToggleShowLog", { show_log: !q.showLog(log) })],
     }
     const q = {
+        isGuidanceIssued: log => q.mostRecent(log, 'guidanceissued', false),
         getSearchHistory: log => {
             const h = [""]
             for (const r of q.stableQueries(log)) {
@@ -188,13 +186,14 @@
         WF.showMessage(`<div id="${app_dom_id}"></div>`)
         stopAppFn = app({
             node: document.getElementById(app_dom_id),
-            init: [record(log, "startApp")],
+            init: [record(log, "startApp"), fxFocusSearchHistory],
             view: log =>
             h("div", { title: "WorkflowyLens", style: { "text-align": "left" } }, [
                 dev_mode && h('button', { onclick: actions.DevShowInfoMessage }, text('show message')),
                 dev_mode && h("button", { onclick: actions.DevToggleShowLog, title: "hide/show event log" },
                               text(log.length.toString().padStart(3, "0") + (log.length == 1 ? "  event" : " events"))),
                 q.getSearchHistory(log).length > 1 && h("select", {
+                    id: searchHistorySelectElementId,
                     style: { position: "absolute", right: "50px", top: "5px" },
                     onchange: (_, e) => [actions.ChangeSearch, e.target.value],
                     title: "search history including starred"

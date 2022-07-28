@@ -25,7 +25,7 @@ await (async () => {
         }
     }
     const DevMode = (() => {
-        const isOn = log => true
+        const isOn = log => false
         const ShowInfoMessage = log => [record(log, 'ShowInfoMessage'), () => WF.showMessage('show message')]
         const ResetLog = _ => [record(initialLog(), "ResetLog")]
         const ToggleShowLog = log => [record(log, "ToggleShowLog", { showLog: !q.showLog(log) })]

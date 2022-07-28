@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WorkflowyLens
 // @namespace    http://tampermonkey.net/
-// @version      0.5
+// @version      0.5.1
 // @description  See more in Workflowy
 // @author       Mark E Kendrat
 // @match        https://workflowy.com

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WorkflowyLens
 // @namespace    http://tampermonkey.net/
-// @version      0.5.2
+// @version      0.5.3
 // @description  See more in Workflowy
 // @author       Mark E Kendrat
 // @match        https://workflowy.com
@@ -123,7 +123,7 @@ await (async () => {
                }})()
     const actions = {
         Keydown: (log, e) => WfShowMessage.restartHyperApp(log, e.ctrlKey && e.key == 'l', () => e.preventDefault()),
-        WfShowMessageRemoved: log => [record(log, 'WfShowMessageRemoved', !q.isGuidanceIssued(log) && { guidanceissued: true }), q.isGuidanceIssued(log) || (() => WF.showMessage('WorkflowyLens message can be toggled with Ctrl+l (lower case "L"'))],
+        WfShowMessageRemoved: log => [record(log, 'WfShowMessageRemoved', !q.isGuidanceIssued(log) && { guidanceissued: true }), q.isGuidanceIssued(log) || (() => WF.showMessage('WorkflowyLens message can be toggled with Ctrl+l (lower case "L")'))],
         WfEvent: (log, event) => [record(log, event)],
     }
     const q = {
